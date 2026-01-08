@@ -1,0 +1,22 @@
+
+{
+  "manifest_version": 2,
+  "name": "Zen Minimal Ad Blocker",
+  "version": "0.1",
+  "description": "Minimal educational ad blocker for Zen",
+  "permissions": [
+    "<all_urls>",
+    "webRequest",
+    "webRequestBlocking"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*"],
+      "js": ["content/youtube.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
