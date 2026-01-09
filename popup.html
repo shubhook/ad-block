@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Zen Ad Blocker</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8f9fa;
+            color: #333;
+            min-width: 320px;
+        }
+        
+        .popup {
+            width: 320px;
+            background: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 500;
+        }
+        
+        .status {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .status.enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status.disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .stats {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .stat-row:last-child {
+            margin-bottom: 0;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .actions {
+            padding: 20px;
+        }
+        
+        .button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 10px;
+            transition: opacity 0.2s;
+        }
+        
+        .button:last-child {
+            margin-bottom: 0;
+        }
+        
+        .button:hover {
+            opacity: 0.9;
+        }
+        
+        .button.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .button.secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .button.danger {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .toggle-label {
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: #ccc;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .toggle-switch.active {
+            background: #667eea;
+        }
+        
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        
+        .toggle-switch.active::after {
+            transform: translateX(20px);
+        }
+        
+        .site-info {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .site-url {
+            font-size: 12px;
+            color: #666;
+            word-break: break-all;
+        }
+        
+        .site-status {
+            font-size: 14px;
+            font-weight: 500;
+            margin-top: 5px;
+        }
+        
+        .site-status.clean {
+            color: #28a745;
+        }
+        
+        .site-status.blocked {
+            color: #dc3545;
+        }
+        
+        .footer {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            text-align: center;
+        }
+        
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
+            font-size: 12px;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="popup">
+        <div class="header">
+            <h1>Zen Ad Blocker</h1>
+        </div>
+        
+        <div class="status" id="status">
+            <div id="statusText">Loading...</div>
+        </div>
+        
+        <div class="site-info">
+            <div class="site-url" id="siteUrl">Current page</div>
+            <div class="site-status" id="siteStatus">Checking...</div>
+        </div>
+        
+        <div class="toggle">
+            <span class="toggle-label">Enable Ad Blocker</span>
+            <div class="toggle-switch" id="enableToggle"></div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-row">
+                <span class="stat-label">Today's Blocked</span>
+                <span class="stat-value" id="todayBlocked">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Blocked</span>
+                <span class="stat-value" id="totalBlocked">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Trackers Blocked</span>
+                <span class="stat-value" id="trackersBlocked">0</span>
+            </div>
+        </div>
+        
+        <div class="actions">
+            <button class="button primary" id="whitelistBtn">Whitelist Current Site</button>
+            <button class="button secondary" id="optionsBtn">Options</button>
+            <button class="button danger" id="resetBtn">Reset Statistics</button>
+        </div>
+        
+        <div class="footer">
+            <a href="#" id="donateLink">Support Zen Ad Blocker</a>
+        </div>
+    </div>
+    
+    <script src="popup.js"></script>
+</body>
+</html>
