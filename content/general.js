@@ -3,19 +3,13 @@
 
     // CSS to hide common ad elements across websites
     const adHidingCSS = `
-        /* Common ad containers */
-        .ad,
-        .ads,
-        .advert,
-        .advertising,
-        .advertisement,
+        /* Specific ad containers - be conservative */
         .ad-container,
         .ad-wrapper,
         .ad-slot,
         .ad-space,
         .ad-banner,
         .ad-box,
-        .ad-block,
         .ad-content,
         .ad-display,
         .ad-frame,
@@ -24,9 +18,8 @@
         .ad-section,
         .ad-sidebar,
         .ad-unit,
-        .ad-wrapper,
         
-        /* Google AdSense */
+        /* Google AdSense - specific classes only */
         .adsbygoogle,
         .google-ads,
         .google-ad,
@@ -49,87 +42,52 @@
         /* LinkedIn ads */
         .li-ad,
         .linkedin-ad,
-        .sponsored-content,
         
         /* Reddit ads */
         .promotedlink,
         .reddit-ad,
         .sponsored-link,
         
-        /* Generic ad selectors */
-        [class*="ad-"],
-        [class*="ads-"],
-        [class*="advert"],
-        [class*="advertisement"],
-        [id*="ad-"],
-        [id*="ads-"],
-        [id*="advert"],
-        [id*="advertisement"],
-        
-        /* Iframe ads */
-        iframe[src*="ads"],
+        /* Iframe ads - specific domains only */
         iframe[src*="doubleclick"],
         iframe[src*="googlesyndication"],
         iframe[src*="amazon-adsystem"],
         iframe[src*="facebook.com/tr"],
+        iframe[src*="adsystem"],
+        iframe[src*="adservice"],
         
-        /* Script ad containers */
-        script[src*="ads"],
-        script[src*="doubleclick"],
-        script[src*="googlesyndication"],
-        
-        /* Common ad sizes */
+        /* Common ad sizes - specific dimensions only */
         div[style*="width: 300px"][style*="height: 250px"],
         div[style*="width: 728px"][style*="height: 90px"],
         div[style*="width: 160px"][style*="height: 600px"],
         div[style*="width: 300px"][style*="height: 600px"],
         div[style*="width: 970px"][style*="height: 90px"],
         
-        /* Social media widgets */
-        .fb-like,
-        .fb-share,
-        .twitter-share,
-        .twitter-follow,
-        .linkedin-share,
-        .pinterest-share,
-        
         /* Newsletter popups */
         .newsletter-popup,
         .email-popup,
         .subscribe-popup,
-        .popup-overlay,
-        
-        /* Cookie banners (optional) */
-        .cookie-banner,
-        .cookie-notice,
-        .gdpr-banner,
-        .privacy-notice,
         
         /* Push notifications */
         .push-notification,
         .notification-prompt,
         .subscribe-prompt,
         
-        /* General ad hiding */
+        /* Data attributes for ads */
         [data-ad],
         [data-ads],
         [data-advertisement],
         [data-ad-unit],
         [data-ad-slot],
         
-        /* Sponsored content */
-        .sponsored,
-        .sponsor,
-        .promotion,
-        .promoted,
+        /* Sponsored content - be more specific */
+        .sponsored-content,
         .paid-content,
         .partner-content,
         
         /* Native ads */
         .native-ad,
         .native-ads,
-        .recommended-content,
-        .suggested-content,
         
         /* Video ads */
         .video-ad,
@@ -288,15 +246,13 @@
 
     // Remove ad elements dynamically
     function removeAdElements() {
-        // Common ad selectors
+        // Specific ad selectors - be conservative
         const adSelectors = [
-            '.ad', '.ads', '.advert', '.advertising', '.advertisement',
             '.ad-container', '.ad-wrapper', '.ad-slot', '.ad-space',
-            '.adsbygoogle', '.google-ads', '.sponsored', '.promotion',
-            '.promoted', '.native-ad', '.video-ad', '.mobile-ad',
-            '[class*="ad-"]', '[class*="ads-"]', '[id*="ad-"]', '[id*="ads-"]',
-            'iframe[src*="ads"]', 'iframe[src*="doubleclick"]',
-            'script[src*="ads"]', 'script[src*="doubleclick"]'
+            '.adsbygoogle', '.google-ads', '.sponsored-content', '.paid-content',
+            '.native-ad', '.video-ad', '.mobile-ad',
+            'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
+            'iframe[src*="amazon-adsystem"]', 'iframe[src*="facebook.com/tr"]'
         ];
 
         // Remove elements matching selectors
@@ -379,8 +335,8 @@
                 if (mutation.type === 'childList') {
                     mutation.addedNodes.forEach((node) => {
                         if (node.nodeType === Node.ELEMENT_NODE) {
-                            // Check if the added node or its children are ads
-                            if (isAdElement(node) || node.querySelector && node.querySelector('[class*="ad-"], [id*="ad-"], .ads, .advert')) {
+                            // Check if the added node or its children are ads - be more specific
+                            if (isAdElement(node) || node.querySelector && node.querySelector('.ad-container, .adsbygoogle, .sponsored-content, iframe[src*="doubleclick"]')) {
                                 shouldRemoveAds = true;
                             }
                         }
@@ -410,7 +366,8 @@
     function isAdElement(element) {
         if (!element || !element.classList) return false;
         
-        const adClasses = ['ad', 'ads', 'advert', 'advertisement', 'sponsored', 'promotion'];
+        // Be more specific - only match exact ad classes
+        const adClasses = ['ad-container', 'ad-wrapper', 'ad-slot', 'adsbygoogle', 'sponsored-content'];
         const className = element.className.toString().toLowerCase();
         
         return adClasses.some(adClass => className.includes(adClass));
