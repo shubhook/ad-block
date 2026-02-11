@@ -1,232 +1,299 @@
 (function() {
     'use strict';
 
-    // CSS to hide YouTube ads
+    // Prevent multiple initializations
+    if (window.__zenAdBlockerYouTube) return;
+    window.__zenAdBlockerYouTube = true;
+
+    // CSS to hide YouTube ads - very specific selectors to avoid breaking functionality
     const adHidingCSS = `
-        /* Video ads */
+        /* Video ad overlays */
         .ytp-ad-module,
-        .ytp-ad-preview-container,
-        .ytp-ad-overlay,
         .ytp-ad-overlay-container,
-        .ytp-ad-image-overlay,
         .ytp-ad-text-overlay,
-        .ytp-ad-skip-button,
-        .ytp-ad-skip-button-container,
+        .ytp-ad-image-overlay,
         
-        /* Ad containers */
-        .video-ads,
-        .ad-container,
-        .ad-display,
-        .ad-slot,
-        .ad-creative,
+        /* Ad player elements */
+        .ytp-ad-player-overlay,
+        .ytp-ad-player-overlay-layout,
+        .ytp-ad-action-interstitial,
         
-        /* Sponsored content */
-        .ytp-ce-element,
-        .ytp-ce-covering-overlay,
-        .ytp-ce-shadow,
-        .ytp-ce-channel-metadata,
-        .ytp-ce-video-title,
+        /* Skip button container (hide, we auto-click it) */
+        .ytp-ad-skip-button-modern,
         
-        /* Homepage ads */
-        .ytd-display-ad-renderer,
-        .ytd-promoted-sparkles-text-renderer,
-        .ytd-promoted-video-renderer,
-        .ytd-in-feed-ad-layout-renderer,
-        .ytd-ad-slot-renderer,
+        /* Ad badges and labels */
+        .ytp-ad-badge,
+        .ytp-ad-visit-advertiser-button,
         
-        /* Sidebar ads */
-        .ytd-watch-next-secondary-results-renderer .ytd-display-ad-renderer,
+        /* Homepage/feed ads */
+        ytd-display-ad-renderer,
+        ytd-promoted-sparkles-web-renderer,
+        ytd-promoted-sparkles-text-search-renderer,
+        ytd-ad-slot-renderer,
+        ytd-in-feed-ad-layout-renderer,
+        ytd-banner-promo-renderer,
         
-        /* Comment section ads */
-        .ytd-comment-thread-renderer #ad-comment-renderer,
+        /* Masthead ads */
+        ytd-primetime-promo-renderer,
         
-        /* End screen ads */
-        .ytp-ce-endscreen,
+        /* Sidebar promoted videos */
+        ytd-compact-promoted-video-renderer,
         
-        /* General ad classes */
-        [class*="ad-"],
-        [class*="ads-"],
-        [id*="ad-"],
-        [id*="ads-"] {
+        /* Search result ads */
+        ytd-promoted-video-renderer {
             display: none !important;
             visibility: hidden !important;
-            opacity: 0 !important;
             height: 0 !important;
-            width: 0 !important;
             overflow: hidden !important;
+        }
+        
+        /* Hide ad preview container but keep video visible */
+        .ytp-ad-preview-container {
+            opacity: 0 !important;
+            pointer-events: none !important;
         }
     `;
 
+    let observer = null;
+    let videoObserver = null;
+    let styleElement = null;
+    let skipInterval = null;
+
     // Inject CSS to hide ads
     function injectAdHidingCSS() {
-        const style = document.createElement('style');
-        style.textContent = adHidingCSS;
-        style.id = 'youtube-ad-blocker-styles';
-        (document.head || document.documentElement).appendChild(style);
+        if (document.getElementById('zen-youtube-ad-blocker-styles')) {
+            return; // Already injected
+        }
+        
+        styleElement = document.createElement('style');
+        styleElement.textContent = adHidingCSS;
+        styleElement.id = 'zen-youtube-ad-blocker-styles';
+        (document.head || document.documentElement).appendChild(styleElement);
     }
 
     // Skip video ads
     function skipVideoAds() {
-        const video = document.querySelector('video');
-        if (!video) return;
-
-        // Skip ad if it's playing
-        const skipButton = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-container button');
-        if (skipButton) {
-            skipButton.click();
-            console.log('YouTube Ad Blocker: Skipped video ad');
+        // Try to click skip button
+        const skipButtons = document.querySelectorAll(
+            '.ytp-ad-skip-button, ' +
+            '.ytp-ad-skip-button-modern, ' +
+            '.ytp-skip-ad-button, ' +
+            'button.ytp-ad-skip-button-container'
+        );
+        
+        for (const button of skipButtons) {
+            if (button && button.offsetParent !== null) {
+                button.click();
+                return true;
+            }
         }
 
-        // Fast forward through ads
-        const adContainer = document.querySelector('.ytp-ad-module');
-        if (adContainer && video.duration > 0) {
-            // Try to skip to the end of the ad
-            video.currentTime = video.duration;
-            console.log('YouTube Ad Blocker: Fast-forwarded through ad');
+        // Check if an ad is playing and try to skip it
+        const video = document.querySelector('video.html5-main-video');
+        if (!video) return false;
+
+        // Detect if ad is playing
+        const adModule = document.querySelector('.ytp-ad-module');
+        const adOverlay = document.querySelector('.ytp-ad-player-overlay');
+        const adPlaying = document.querySelector('.ad-showing');
+        
+        if (adModule || adOverlay || adPlaying) {
+            // Mute during ad
+            video.muted = true;
+            
+            // Try to skip to end
+            if (video.duration && video.duration > 0 && isFinite(video.duration)) {
+                video.currentTime = video.duration - 0.1;
+            }
+            
+            // Increase playback rate
+            video.playbackRate = 16;
+            
+            return true;
+        } else {
+            // Restore normal state when ad ends
+            video.playbackRate = 1;
         }
 
-        // Remove ad overlays
-        const adOverlays = document.querySelectorAll('.ytp-ad-overlay, .ytp-ad-preview-container');
-        adOverlays.forEach(overlay => overlay.remove());
+        return false;
     }
 
-    // Remove sponsored content
-    function removeSponsoredContent() {
-        const sponsoredElements = document.querySelectorAll('.ytp-ce-element, .ytp-ce-covering-overlay');
-        sponsoredElements.forEach(element => element.remove());
+    // Remove feed ads (homepage, search results, sidebar)
+    function removeFeedAds() {
+        const adSelectors = [
+            'ytd-display-ad-renderer',
+            'ytd-promoted-sparkles-web-renderer',
+            'ytd-promoted-sparkles-text-search-renderer',
+            'ytd-ad-slot-renderer',
+            'ytd-in-feed-ad-layout-renderer',
+            'ytd-banner-promo-renderer',
+            'ytd-compact-promoted-video-renderer',
+            'ytd-promoted-video-renderer',
+            'ytd-primetime-promo-renderer'
+        ];
+
+        adSelectors.forEach(selector => {
+            const elements = document.querySelectorAll(selector);
+            elements.forEach(el => {
+                if (el && el.parentNode) {
+                    el.style.display = 'none';
+                }
+            });
+        });
     }
 
-    // Remove homepage ads
-    function removeHomepageAds() {
-        const homepageAds = document.querySelectorAll('.ytd-display-ad-renderer, .ytd-promoted-sparkles-text-renderer, .ytd-promoted-video-renderer, .ytd-in-feed-ad-layout-renderer, .ytd-ad-slot-renderer');
-        homepageAds.forEach(ad => ad.remove());
-    }
+    // Setup observer for video ads
+    function setupVideoAdObserver() {
+        if (videoObserver) {
+            videoObserver.disconnect();
+        }
 
-    // Remove sidebar ads
-    function removeSidebarAds() {
-        const sidebarAds = document.querySelectorAll('.ytd-watch-next-secondary-results-renderer .ytd-display-ad-renderer');
-        sidebarAds.forEach(ad => ad.remove());
-    }
+        const player = document.querySelector('#movie_player');
+        if (!player) {
+            // Retry later if player not found
+            setTimeout(setupVideoAdObserver, 1000);
+            return;
+        }
 
-    // Remove comment section ads
-    function removeCommentAds() {
-        const commentAds = document.querySelectorAll('#ad-comment-renderer');
-        commentAds.forEach(ad => ad.closest('ytd-comment-thread-renderer')?.remove());
-    }
-
-    // Main ad removal function
-    function removeAds() {
-        skipVideoAds();
-        removeSponsoredContent();
-        removeHomepageAds();
-        removeSidebarAds();
-        removeCommentAds();
-    }
-
-    // MutationObserver to detect dynamic ads
-    function setupMutationObserver() {
-        const observer = new MutationObserver((mutations) => {
-            let shouldRemoveAds = false;
-
-            mutations.forEach((mutation) => {
+        videoObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    // Check if ad started
+                    if (player.classList.contains('ad-showing')) {
+                        skipVideoAds();
+                    }
+                }
                 if (mutation.type === 'childList') {
-                    // Check if any ad-related elements were added
-                    mutation.addedNodes.forEach((node) => {
+                    for (const node of mutation.addedNodes) {
                         if (node.nodeType === Node.ELEMENT_NODE) {
                             if (node.classList && (
                                 node.classList.contains('ytp-ad-module') ||
-                                node.classList.contains('ytp-ad-overlay') ||
-                                node.classList.contains('ytp-ce-element') ||
-                                node.classList.contains('ytd-display-ad-renderer') ||
-                                node.classList.contains('ytd-promoted-video-renderer') ||
-                                node.classList.toString().includes('ad-')
+                                node.classList.contains('ytp-ad-overlay-container') ||
+                                node.classList.contains('ytp-ad-player-overlay')
                             )) {
-                                shouldRemoveAds = true;
+                                skipVideoAds();
                             }
                         }
-                    });
+                    }
                 }
-            });
-
-            if (shouldRemoveAds) {
-                setTimeout(removeAds, 100);
             }
         });
 
-        // Start observing the entire document
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
+        videoObserver.observe(player, {
             attributes: true,
-            attributeFilter: ['class', 'id']
+            attributeFilter: ['class'],
+            childList: true,
+            subtree: true
         });
-
-        return observer;
     }
 
-    // Handle video player events
-    function setupVideoPlayerEvents() {
-        const video = document.querySelector('video');
-        if (!video) return;
+    // Setup observer for feed ads
+    function setupFeedObserver() {
+        if (observer) {
+            observer.disconnect();
+        }
 
-        // Listen for time updates to skip ads
-        video.addEventListener('timeupdate', () => {
-            skipVideoAds();
+        observer = new MutationObserver((mutations) => {
+            let shouldRemove = false;
+            
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList') {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType === Node.ELEMENT_NODE) {
+                            const tagName = node.tagName?.toLowerCase() || '';
+                            if (tagName.includes('ad-') || 
+                                tagName.includes('promoted') ||
+                                tagName === 'ytd-display-ad-renderer' ||
+                                tagName === 'ytd-ad-slot-renderer') {
+                                shouldRemove = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (shouldRemove) break;
+            }
+
+            if (shouldRemove) {
+                setTimeout(removeFeedAds, 100);
+            }
         });
 
-        // Listen for loaded metadata
-        video.addEventListener('loadedmetadata', () => {
-            setTimeout(skipVideoAds, 500);
-        });
+        if (document.body) {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+    }
 
-        // Listen for play events
-        video.addEventListener('play', () => {
-            setTimeout(skipVideoAds, 500);
-        });
+    // Start skip interval for persistent ad detection
+    function startSkipInterval() {
+        if (skipInterval) {
+            clearInterval(skipInterval);
+        }
+        
+        // Check for ads every 500ms - less aggressive than before
+        skipInterval = setInterval(() => {
+            const player = document.querySelector('#movie_player');
+            if (player && player.classList.contains('ad-showing')) {
+                skipVideoAds();
+            }
+        }, 500);
     }
 
     // Initialize the ad blocker
     function init() {
-        console.log('YouTube Ad Blocker: Initializing...');
-        
         // Inject CSS
         injectAdHidingCSS();
         
-        // Initial ad removal
-        setTimeout(removeAds, 1000);
+        // Initial cleanup
+        setTimeout(removeFeedAds, 500);
+        setTimeout(skipVideoAds, 1000);
         
-        // Setup video player events
-        setTimeout(setupVideoPlayerEvents, 1500);
+        // Setup observers
+        setupFeedObserver();
+        setupVideoAdObserver();
         
-        // Setup mutation observer
-        setTimeout(setupMutationObserver, 2000);
-        
-        // Periodic ad removal
-        setInterval(removeAds, 3000);
-        
-        console.log('YouTube Ad Blocker: Initialized successfully');
+        // Start skip interval
+        startSkipInterval();
     }
 
-    // Wait for DOM to be ready
+    // Cleanup function
+    function cleanup() {
+        if (observer) observer.disconnect();
+        if (videoObserver) videoObserver.disconnect();
+        if (skipInterval) clearInterval(skipInterval);
+    }
+
+    // Handle SPA navigation
+    let lastUrl = location.href;
+    function checkUrlChange() {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            // Re-initialize on navigation
+            setTimeout(() => {
+                removeFeedAds();
+                setupVideoAdObserver();
+            }, 1000);
+        }
+    }
+
+    // Watch for URL changes
+    const urlObserver = new MutationObserver(checkUrlChange);
+    urlObserver.observe(document.body || document.documentElement, {
+        childList: true,
+        subtree: true
+    });
+
+    // Initialize based on document state
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
 
-    // Also initialize when the page is fully loaded
-    window.addEventListener('load', () => {
-        setTimeout(init, 1000);
-    });
-
-    // Handle navigation changes (YouTube is a SPA)
-    let lastUrl = location.href;
-    new MutationObserver(() => {
-        const url = location.href;
-        if (url !== lastUrl) {
-            lastUrl = url;
-            setTimeout(init, 2000);
-        }
-    }).observe(document, { subtree: true, childList: true });
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', cleanup);
 
 })();

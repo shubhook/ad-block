@@ -1,67 +1,19 @@
 // Zen Ad Blocker - Background Script
 (function() {
     'use strict';
-    
-    // Default settings
-    const defaultSettings = {
-        enabled: true,
-        showNotifications: true,
-        blockTrackers: true,
-        blockSocial: true,
-        logLevel: 'warn',
-        customFilters: '',
-        filterLists: [
-            'https://easylist.to/easylist/easylist.txt',
-            'https://easylist.to/easylist/easyprivacy.txt'
-        ],
-        whitelist: [],
-        stats: {
-            totalBlocked: 0,
-            todayBlocked: 0,
-            trackersBlocked: 0,
-            pagesCleaned: 0,
-            lastReset: new Date().toDateString()
-        }
-    };
+
+    // Use shared settings
+    const defaultSettings = ZenSettings.getDefaults();
+    const builtinDomains = ZenSettings.getBuiltinDomains();
     
     // In-memory cache for filters and settings
-    let settings = defaultSettings;
-    let blockedDomains = new Set();
+    let settings = { ...defaultSettings };
+    let blockedDomains = new Set(builtinDomains);
     let filterRules = [];
     
-    // Built-in ad domains
-    const builtinDomains = [
-        "doubleclick.net",
-        "googlesyndication.com",
-        "adsystem.com",
-        "adservice.google.com",
-        "googleadservices.com",
-        "googletagmanager.com",
-        "googletagservices.com",
-        "google-analytics.com",
-        "facebook.com/tr",
-        "connect.facebook.net",
-        "amazon-adsystem.com",
-        "ads-twitter.com",
-        "ads-api.twitter.com",
-        "adserver.yahoo.com",
-        "advertising.yahoo.com",
-        "atdmt.com",
-        "adsymptotic.com",
-        "adnxs.com",
-        "advertising.com",
-        "appnexus.com",
-        "criteo.com",
-        "taboola.com",
-        "outbrain.com",
-        "sharethrough.com",
-        "rubiconproject.com",
-        "indexww.com",
-        "adtechus.com",
-        "adsystem.us",
-        "doubleclick.com",
-        "googleads.g.doubleclick.net"
-    ];
+    // Stats update throttling
+    let pendingStatsUpdate = null;
+    const STATS_UPDATE_INTERVAL = 5000; // Only write stats every 5 seconds
     
     // Initialize the background script
     function init() {
@@ -69,12 +21,16 @@
         setupWebRequestListener();
         setupMessageListener();
         setupAlarmListener();
-        updateStatistics();
+        checkDailyReset();
     }
     
     // Load settings from storage
     function loadSettings() {
         browser.storage.sync.get(defaultSettings, function(loadedSettings) {
+            if (browser.runtime.lastError) {
+                log('Error loading settings: ' + browser.runtime.lastError.message, 'error');
+                return;
+            }
             settings = loadedSettings;
             loadFilters();
             log('Settings loaded', 'info');
@@ -83,231 +39,291 @@
     
     // Load and parse filter lists
     function loadFilters() {
-        blockedDomains.clear();
+        // Start with builtin domains
+        blockedDomains = new Set(builtinDomains);
         filterRules = [];
-        
-        // Add built-in domains
-        builtinDomains.forEach(domain => blockedDomains.add(domain));
         
         // Add custom filters
         if (settings.customFilters) {
             parseCustomFilters(settings.customFilters);
         }
         
-        // Load filter lists
+        // Load external filter lists
         loadFilterLists();
     }
     
     // Parse custom filters
     function parseCustomFilters(customFilters) {
         const lines = customFilters.split('\n');
-        lines.forEach(line => {
-            line = line.trim();
-            if (line && !line.startsWith('!') && !line.startsWith('#')) {
-                if (line.startsWith('||')) {
-                    // Domain blocking rule
-                    const domain = line.substring(2).replace('^', '');
+        for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line || line.startsWith('!') || line.startsWith('[')) {
+                continue;
+            }
+            
+            // Domain blocking rule: ||domain.com^
+            if (line.startsWith('||') && !line.includes('$')) {
+                const domain = line.substring(2).replace(/[\^$]/g, '').split('/')[0];
+                if (domain && !domain.includes('*')) {
                     blockedDomains.add(domain);
-                } else if (line.startsWith('##')) {
-                    // Element hiding rule
-                    const selector = line.substring(2);
+                }
+            }
+            // Element hiding rule: ##selector (store for content scripts)
+            else if (line.startsWith('##')) {
+                const selector = line.substring(2);
+                if (selector) {
                     filterRules.push({ type: 'element', selector: selector });
                 }
             }
-        });
+        }
     }
     
     // Load filter lists from URLs
     function loadFilterLists() {
-        settings.filterLists.forEach(url => {
-            fetch(url)
-                .then(response => response.text())
-                .then(text => parseFilterList(text))
-                .catch(error => log(`Failed to load filter list ${url}: ${error}`, 'error'));
-        });
+        if (!settings.filterLists || settings.filterLists.length === 0) {
+            return;
+        }
+        
+        for (const url of settings.filterLists) {
+            fetch(url, { 
+                cache: 'default',
+                headers: { 'Accept': 'text/plain' }
+            })
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.text();
+            })
+            .then(text => parseFilterList(text))
+            .catch(error => log(`Failed to load filter list ${url}: ${error.message}`, 'warn'));
+        }
     }
     
-    // Parse filter list text
+    // Parse filter list text (EasyList format)
     function parseFilterList(text) {
         const lines = text.split('\n');
-        lines.forEach(line => {
-            line = line.trim();
-            if (line && !line.startsWith('!') && !line.startsWith('#')) {
-                if (line.startsWith('||')) {
-                    const domain = line.substring(2).replace('^', '');
+        let added = 0;
+        
+        for (const rawLine of lines) {
+            const line = rawLine.trim();
+            
+            // Skip comments, empty lines, and headers
+            if (!line || line.startsWith('!') || line.startsWith('[')) {
+                continue;
+            }
+            
+            // Only parse domain blocking rules for now
+            // Format: ||domain.com^ or ||domain.com^$options
+            if (line.startsWith('||') && !line.startsWith('||/')) {
+                // Extract domain part
+                let domain = line.substring(2);
+                
+                // Remove options
+                const optionIndex = domain.indexOf('$');
+                if (optionIndex !== -1) {
+                    domain = domain.substring(0, optionIndex);
+                }
+                
+                // Remove path and anchors
+                domain = domain.replace(/[\^/].*$/, '');
+                
+                // Skip wildcards and complex patterns
+                if (domain && !domain.includes('*') && !domain.includes('?')) {
                     blockedDomains.add(domain);
+                    added++;
                 }
             }
-        });
+        }
+        
+        log(`Parsed filter list: added ${added} domains`, 'info');
     }
     
     // Setup web request listener
     function setupWebRequestListener() {
+        if (!browser.webRequest) {
+            log('webRequest API not available', 'warn');
+            return;
+        }
+        
         browser.webRequest.onBeforeRequest.addListener(
-            (details) => {
-                if (!settings.enabled) {
-                    return {};
-                }
-                
-                const url = details.url;
-                const domain = extractDomain(url);
-                
-                // Check whitelist
-                if (isWhitelisted(domain)) {
-                    return {};
-                }
-                
-                // Check if should block
-                if (shouldBlock(url, domain)) {
-                    updateStats('totalBlocked');
-                    updateStats('todayBlocked');
-                    
-                    if (settings.blockTrackers && isTracker(url)) {
-                        updateStats('trackersBlocked');
-                    }
-                    
-                    log(`Blocked: ${url}`, 'info');
-                    return { cancel: true };
-                }
-                
-                return {};
-            },
+            handleRequest,
             { urls: ["<all_urls>"] },
             ["blocking"]
         );
     }
     
+    // Handle web request
+    function handleRequest(details) {
+        if (!settings.enabled) {
+            return {};
+        }
+        
+        const url = details.url;
+        const domain = ZenSettings.extractDomain(url);
+        
+        // Check whitelist first (fast path)
+        if (ZenSettings.isWhitelisted(domain, settings.whitelist)) {
+            return {};
+        }
+        
+        // Check initiator/origin whitelist
+        const initiator = details.initiator || details.originUrl || '';
+        const initiatorDomain = ZenSettings.extractDomain(initiator);
+        if (initiatorDomain && ZenSettings.isWhitelisted(initiatorDomain, settings.whitelist)) {
+            return {};
+        }
+        
+        // Check if should block
+        if (ZenSettings.shouldBlockDomain(domain, blockedDomains)) {
+            // Update stats (throttled)
+            incrementStat('totalBlocked');
+            incrementStat('todayBlocked');
+            
+            if (settings.blockTrackers && ZenSettings.isTracker(url)) {
+                incrementStat('trackersBlocked');
+            }
+            
+            log(`Blocked: ${domain}`, 'debug');
+            return { cancel: true };
+        }
+        
+        return {};
+    }
+    
     // Setup message listener
     function setupMessageListener() {
         browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            switch (message.action) {
-                case 'updateFilters':
-                    loadFilters();
-                    sendResponse({ success: true });
-                    break;
-                case 'getStats':
-                    sendResponse({ stats: settings.stats });
-                    break;
-                case 'resetStats':
-                    resetStatistics();
-                    sendResponse({ success: true });
-                    break;
-                default:
-                    sendResponse({ error: 'Unknown action' });
+            try {
+                handleMessage(message, sender, sendResponse);
+            } catch (e) {
+                log('Message handler error: ' + e.message, 'error');
+                sendResponse({ error: e.message });
             }
+            return true; // Keep channel open for async response
         });
+    }
+    
+    // Handle messages from popup/options/content scripts
+    function handleMessage(message, sender, sendResponse) {
+        const action = message.action || message.type;
+        
+        switch (action) {
+            case 'updateFilters':
+                loadFilters();
+                sendResponse({ success: true });
+                break;
+                
+            case 'getStats':
+                sendResponse({ stats: settings.stats });
+                break;
+                
+            case 'getSettings':
+                sendResponse({ settings: settings });
+                break;
+                
+            case 'resetStats':
+                resetStatistics();
+                sendResponse({ success: true });
+                break;
+                
+            case 'GET_BLOCKED_ELEMENTS':
+                const query = (message.query || '').toLowerCase();
+                const allBlocked = [
+                    ...Array.from(blockedDomains),
+                    ...filterRules.filter(r => r.selector).map(r => r.selector)
+                ];
+                
+                const filtered = query 
+                    ? allBlocked.filter(item => item.toLowerCase().includes(query))
+                    : allBlocked;
+                
+                sendResponse({ results: filtered.slice(0, 20) });
+                break;
+                
+            case 'incrementPagesCleaned':
+                incrementStat('pagesCleaned');
+                sendResponse({ success: true });
+                break;
+                
+            default:
+                sendResponse({ error: 'Unknown action: ' + action });
+        }
     }
     
     // Setup alarm listener for periodic tasks
     function setupAlarmListener() {
+        if (!browser.alarms) {
+            log('alarms API not available', 'warn');
+            return;
+        }
+        
         browser.alarms.onAlarm.addListener((alarm) => {
             if (alarm.name === 'dailyReset') {
-                resetDailyStats();
+                checkDailyReset();
             } else if (alarm.name === 'updateFilters') {
                 loadFilters();
+            } else if (alarm.name === 'flushStats') {
+                flushStats();
             }
         });
         
         // Create alarms
-        browser.alarms.create('dailyReset', { periodInMinutes: 24 * 60 });
-        browser.alarms.create('updateFilters', { periodInMinutes: 60 });
+        browser.alarms.create('dailyReset', { periodInMinutes: 60 }); // Check hourly
+        browser.alarms.create('updateFilters', { periodInMinutes: 360 }); // Update every 6 hours
+        browser.alarms.create('flushStats', { periodInMinutes: 1 }); // Flush stats every minute
     }
     
-    // Check if URL should be blocked
-    function shouldBlock(url, domain) {
-        // Check domain blocking
-        for (const blockedDomain of blockedDomains) {
-            if (domain.includes(blockedDomain) || url.includes(blockedDomain)) {
-                return true;
-            }
+    // Increment stat (throttled)
+    function incrementStat(stat) {
+        if (!settings.stats) {
+            settings.stats = ZenSettings.createDefaultStats();
+        }
+        settings.stats[stat] = (settings.stats[stat] || 0) + 1;
+        
+        // Throttle storage writes
+        if (!pendingStatsUpdate) {
+            pendingStatsUpdate = setTimeout(flushStats, STATS_UPDATE_INTERVAL);
+        }
+    }
+    
+    // Flush stats to storage
+    function flushStats() {
+        if (pendingStatsUpdate) {
+            clearTimeout(pendingStatsUpdate);
+            pendingStatsUpdate = null;
         }
         
-        // Check custom filter rules
-        return filterRules.some(rule => {
-            if (rule.type === 'url' && rule.pattern) {
-                return new RegExp(rule.pattern).test(url);
+        browser.storage.sync.set({ stats: settings.stats }, function() {
+            if (browser.runtime.lastError) {
+                log('Error saving stats: ' + browser.runtime.lastError.message, 'warn');
             }
-            return false;
         });
     }
     
-    // Check if domain is whitelisted
-    function isWhitelisted(domain) {
-        return settings.whitelist.some(whitelisted => {
-            return domain === whitelisted || domain.endsWith('.' + whitelisted);
-        });
-    }
-    
-    // Check if URL is a tracker
-    function isTracker(url) {
-        const trackerPatterns = [
-            /google-analytics/,
-            /facebook\.com\/tr/,
-            /doubleclick/,
-            /googletagmanager/,
-            /googlesyndication/,
-            /adsystem/
-        ];
-        
-        return trackerPatterns.some(pattern => pattern.test(url));
-    }
-    
-    // Extract domain from URL
-    function extractDomain(url) {
-        try {
-            const urlObj = new URL(url);
-            return urlObj.hostname;
-        } catch (e) {
-            return '';
-        }
-    }
-    
-    // Update statistics
-    function updateStats(stat) {
-        if (settings.stats) {
-            settings.stats[stat] = (settings.stats[stat] || 0) + 1;
-            browser.storage.sync.set({ stats: settings.stats });
-        }
-    }
-    
-    // Reset daily statistics
-    function resetDailyStats() {
+    // Check and reset daily stats
+    function checkDailyReset() {
         const today = new Date().toDateString();
+        if (!settings.stats) {
+            settings.stats = ZenSettings.createDefaultStats();
+        }
+        
         if (settings.stats.lastReset !== today) {
             settings.stats.todayBlocked = 0;
             settings.stats.lastReset = today;
-            browser.storage.sync.set({ stats: settings.stats });
+            flushStats();
+            log('Daily stats reset', 'info');
         }
     }
     
     // Reset all statistics
     function resetStatistics() {
-        settings.stats = {
-            totalBlocked: 0,
-            todayBlocked: 0,
-            trackersBlocked: 0,
-            pagesCleaned: 0,
-            lastReset: new Date().toDateString()
-        };
-        browser.storage.sync.set({ stats: settings.stats });
-    }
-    
-    // Update statistics periodically
-    function updateStatistics() {
-        resetDailyStats();
+        settings.stats = ZenSettings.createDefaultStats();
+        flushStats();
+        log('Statistics reset', 'info');
     }
     
     // Logging function
     function log(message, level) {
-        if (settings.logLevel !== 'none') {
-            const levels = { error: 0, warn: 1, info: 2, debug: 3 };
-            const currentLevel = levels[level] || 0;
-            const maxLevel = levels[settings.logLevel] || 1;
-            
-            if (currentLevel <= maxLevel) {
-                console.log(`[Zen Ad Blocker] ${message}`);
-            }
-        }
+        ZenSettings.log(message, level, settings.logLevel);
     }
     
     // Initialize the extension

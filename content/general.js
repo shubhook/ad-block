@@ -1,232 +1,109 @@
 (function() {
     'use strict';
 
+    // Prevent multiple initializations
+    if (window.__zenAdBlockerGeneral) return;
+    window.__zenAdBlockerGeneral = true;
+
+    // Skip YouTube - it has its own dedicated content script
+    if (window.location.hostname.includes('youtube.com')) {
+        return;
+    }
+
     // CSS to hide common ad elements across websites
+    // IMPORTANT: Be very conservative to avoid hiding legitimate content like search bars
     const adHidingCSS = `
-        /* Specific ad containers - be conservative */
-        .ad-container,
-        .ad-wrapper,
-        .ad-slot,
-        .ad-space,
-        .ad-banner,
-        .ad-box,
-        .ad-content,
-        .ad-display,
-        .ad-frame,
-        .ad-module,
-        .ad-panel,
-        .ad-section,
-        .ad-sidebar,
-        .ad-unit,
-        
         /* Google AdSense - specific classes only */
         .adsbygoogle,
-        .google-ads,
-        .google-ad,
-        .google-adsense,
+        ins.adsbygoogle,
         
-        /* Amazon Associates */
-        .amzn-ads,
-        .amazon-ads,
-        
-        /* Facebook/Meta ads */
-        .fb-ad,
-        .facebook-ad,
-        .meta-ad,
-        
-        /* Twitter/X ads */
-        .twitter-ad,
-        .promoted-tweet,
-        .x-promoted,
-        
-        /* LinkedIn ads */
-        .li-ad,
-        .linkedin-ad,
-        
-        /* Reddit ads */
-        .promotedlink,
-        .reddit-ad,
-        .sponsored-link,
+        /* Specific ad containers with exact class names */
+        div.ad-banner-container,
+        div.advertisement-container,
+        div.sponsored-ad-container,
         
         /* Iframe ads - specific domains only */
-        iframe[src*="doubleclick"],
-        iframe[src*="googlesyndication"],
-        iframe[src*="amazon-adsystem"],
-        iframe[src*="facebook.com/tr"],
-        iframe[src*="adsystem"],
-        iframe[src*="adservice"],
+        iframe[src*="doubleclick.net"],
+        iframe[src*="googlesyndication.com"],
+        iframe[src*="amazon-adsystem.com"],
+        iframe[src*="adservice.google.com"],
         
-        /* Common ad sizes - specific dimensions only */
-        div[style*="width: 300px"][style*="height: 250px"],
-        div[style*="width: 728px"][style*="height: 90px"],
-        div[style*="width: 160px"][style*="height: 600px"],
-        div[style*="width: 300px"][style*="height: 600px"],
-        div[style*="width: 970px"][style*="height: 90px"],
+        /* Known ad network containers */
+        .taboola-container,
+        .outbrain-container,
+        .criteo-container,
         
-        /* Newsletter popups */
-        .newsletter-popup,
-        .email-popup,
-        .subscribe-popup,
+        /* Promoted content markers */
+        .promotedlink,
         
-        /* Push notifications */
-        .push-notification,
-        .notification-prompt,
-        .subscribe-prompt,
-        
-        /* Data attributes for ads */
-        [data-ad],
-        [data-ads],
-        [data-advertisement],
-        [data-ad-unit],
-        [data-ad-slot],
-        
-        /* Sponsored content - be more specific */
-        .sponsored-content,
-        .paid-content,
-        .partner-content,
-        
-        /* Native ads */
-        .native-ad,
-        .native-ads,
-        
-        /* Video ads */
-        .video-ad,
-        .video-ads,
-        .preroll-ad,
-        .midroll-ad,
-        .postroll-ad,
-        
-        /* Mobile ads */
-        .mobile-ad,
-        .mobile-ads,
-        .app-ad,
-        
-        /* General hiding rules */
-        .ad-overlay,
-        .ad-popup,
-        .ad-modal,
-        .ad-interstitial,
-        .ad-fullscreen {
+        /* Video pre-roll ads */
+        .preroll-ad-container,
+        .video-ad-container {
             display: none !important;
             visibility: hidden !important;
-            opacity: 0 !important;
             height: 0 !important;
             width: 0 !important;
             overflow: hidden !important;
-            position: absolute !important;
-            top: -9999px !important;
-            left: -9999px !important;
         }
     `;
 
-    // Site-specific ad hiding rules
+    // Site-specific ad hiding rules - these are more targeted
     const siteSpecificRules = {
         'facebook.com': `
+            [data-pagelet="RightRail"] > div[data-testid],
             .ego_section,
             .ego_unit,
-            .sponsored_story,
-            ._5jmm,
-            ._4-u8,
-            .pagelet_ego_pane,
-            .adsCategoryTitleLink,
-            .emuAd,
-            .adMediaWrapper,
-            ._4u8,
-            ._5qc3
+            .pagelet_ego_pane {
+                display: none !important;
+            }
         `,
         'twitter.com': `
-            .promoted-account,
-            .promoted-tweet,
-            .x-promoted,
-            .x-ad,
-            .x-sponsored,
-            .x-promoted-trend,
-            .x-promoted-account
+            [data-testid="placementTracking"],
+            article[data-testid="tweet"]:has(svg[data-testid="icon-promoted"]) {
+                display: none !important;
+            }
         `,
-        'instagram.com': `
-            .x7a9z,
-            .x11i5r,
-            .x1mh8g0,
-            .x1yc6yn,
-            .x1lliihq,
-            .x1qjc9v,
-            .x1qjc9v.x1mh8g0
+        'x.com': `
+            [data-testid="placementTracking"],
+            article[data-testid="tweet"]:has(svg[data-testid="icon-promoted"]) {
+                display: none !important;
+            }
         `,
         'linkedin.com': `
-            .feed-shared-mini-update-v2__actor,
-            .feed-shared-actor__description,
-            .sponsored-content,
-            .li-ad,
-            .promotion-card
+            .feed-shared-update-v2:has(.feed-shared-actor__description:contains("Promoted")),
+            .ad-banner-container {
+                display: none !important;
+            }
         `,
         'reddit.com': `
             .promotedlink,
-            .ad-container,
-            .premium-banner,
-            .sponsored-link,
-            .ad-banner,
-            .ad-creative
-        `,
-        'youtube.com': `
-            .ytp-ad-module,
-            .ytp-ad-overlay,
-            .ytp-ad-preview-container,
-            .ytp-ce-element,
-            .ytd-display-ad-renderer,
-            .ytd-promoted-video-renderer,
-            .ytd-in-feed-ad-layout-renderer
+            [data-promoted="true"],
+            shreddit-ad-post {
+                display: none !important;
+            }
         `,
         'amazon.com': `
-            .ad-container,
-            .ad-banner,
-            .sponsored-products,
-            .sponsored-recommendations,
-            .ad-background,
-            .ad-background-image
-        `,
-        'google.com': `
-            .ads,
-            .ads-container,
-            .ad-container,
-            .commercial-unit,
-            .shopping-unit,
-            .plc-list,
-            .related-search-pair
-        `,
-        'news.yahoo.com': `
-            .ad-container,
-            .ad-slideshow,
-            .ad-mrec,
-            .ad-widesky,
-            .sponsored-content
-        `,
-        'cnn.com': `
-            .ad-container,
-            .ad-wrapper,
-            .sponsored-content,
-            .advertisement,
-            .ad-slot
-        `,
-        'bbc.com': `
-            .ad-container,
-            .ad-wrapper,
-            .sponsored-content,
-            .gel-advert,
-            .advert
+            .s-sponsored-label-text,
+            div[data-component-type="sp-sponsored-result"],
+            .AdHolder {
+                display: none !important;
+            }
         `
     };
+
+    let observer = null;
+    let styleElement = null;
 
     // Inject CSS to hide ads
     function injectAdHidingCSS() {
         // Remove existing styles if any
-        const existingStyle = document.getElementById('general-ad-blocker-styles');
-        if (existingStyle) {
-            existingStyle.remove();
+        if (styleElement && styleElement.parentNode) {
+            styleElement.parentNode.removeChild(styleElement);
         }
 
         // Create style element
-        const style = document.createElement('style');
-        style.id = 'general-ad-blocker-styles';
+        styleElement = document.createElement('style');
+        styleElement.id = 'zen-general-ad-blocker-styles';
         
         // Combine general and site-specific CSS
         let cssContent = adHidingCSS;
@@ -240,171 +117,145 @@
             }
         }
         
-        style.textContent = cssContent;
-        (document.head || document.documentElement).appendChild(style);
+        styleElement.textContent = cssContent;
+        (document.head || document.documentElement).appendChild(styleElement);
     }
 
-    // Remove ad elements dynamically
+    // Very conservative ad element removal - only target known ad elements
     function removeAdElements() {
-        // Specific ad selectors - be conservative
-        const adSelectors = [
-            '.ad-container', '.ad-wrapper', '.ad-slot', '.ad-space',
-            '.adsbygoogle', '.google-ads', '.sponsored-content', '.paid-content',
-            '.native-ad', '.video-ad', '.mobile-ad',
-            'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
-            'iframe[src*="amazon-adsystem"]', 'iframe[src*="facebook.com/tr"]'
+        // Only remove elements that are definitively ads
+        const safeAdSelectors = [
+            'ins.adsbygoogle',
+            'iframe[src*="doubleclick.net"]',
+            'iframe[src*="googlesyndication.com"]',
+            'iframe[src*="amazon-adsystem.com"]',
+            '.taboola-container',
+            '.outbrain-container'
         ];
 
-        // Remove elements matching selectors
-        adSelectors.forEach(selector => {
+        safeAdSelectors.forEach(selector => {
             try {
                 const elements = document.querySelectorAll(selector);
                 elements.forEach(element => {
-                    if (element && element.parentNode) {
-                        element.parentNode.removeChild(element);
+                    // Double-check it's not inside a legitimate container
+                    if (element && element.parentNode && !isLegitimateElement(element)) {
+                        element.style.display = 'none';
+                        element.style.visibility = 'hidden';
+                        element.style.height = '0';
+                        element.style.width = '0';
                     }
                 });
             } catch (e) {
                 // Ignore errors for invalid selectors
             }
         });
-
-        // Remove elements with ad-related attributes
-        const adAttributes = ['data-ad', 'data-ads', 'data-advertisement', 'data-ad-unit'];
-        adAttributes.forEach(attr => {
-            const elements = document.querySelectorAll(`[${attr}]`);
-            elements.forEach(element => {
-                if (element && element.parentNode) {
-                    element.parentNode.removeChild(element);
-                }
-            });
-        });
     }
 
-    // Block ad scripts
-    function blockAdScripts() {
-        // Remove existing ad scripts
-        const adScripts = document.querySelectorAll('script[src*="ads"], script[src*="doubleclick"], script[src*="googlesyndication"]');
-        adScripts.forEach(script => {
-            if (script && script.parentNode) {
-                script.parentNode.removeChild(script);
-            }
-        });
-
-        // Prevent new ad scripts from loading
-        const originalCreateElement = document.createElement;
-        document.createElement = function(tagName) {
-            const element = originalCreateElement.call(this, tagName);
-            
-            if (tagName.toLowerCase() === 'script') {
-                const originalSetAttribute = element.setAttribute;
-                element.setAttribute = function(name, value) {
-                    if (name === 'src' && isAdScript(value)) {
-                        throw new Error('Ad script blocked');
-                    }
-                    return originalSetAttribute.call(this, name, value);
-                };
-            }
-            
-            return element;
-        };
-    }
-
-    // Check if script URL is ad-related
-    function isAdScript(url) {
-        const adPatterns = [
-            /ads/,
-            /doubleclick/,
-            /googlesyndication/,
-            /googleads/,
-            /amazon-adsystem/,
-            /facebook\.com\/tr/,
-            /analytics/,
-            /tracking/
+    // Check if element is part of legitimate page content
+    function isLegitimateElement(element) {
+        // Check if element is inside search forms, navigation, headers, etc.
+        const legitimateContainers = [
+            'form[role="search"]',
+            'form[action*="search"]',
+            'input[type="search"]',
+            'header',
+            'nav',
+            '[role="search"]',
+            '[role="navigation"]',
+            '[role="banner"]',
+            '.search-form',
+            '.searchbox',
+            '#search',
+            '#searchform'
         ];
-        
-        return adPatterns.some(pattern => pattern.test(url));
+
+        for (const selector of legitimateContainers) {
+            try {
+                if (element.closest(selector)) {
+                    return true;
+                }
+            } catch (e) {
+                // Ignore selector errors
+            }
+        }
+
+        return false;
     }
 
     // Setup MutationObserver to catch dynamic ads
     function setupMutationObserver() {
-        const observer = new MutationObserver((mutations) => {
-            let shouldRemoveAds = false;
+        if (observer) {
+            observer.disconnect();
+        }
 
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'childList') {
-                    mutation.addedNodes.forEach((node) => {
+        observer = new MutationObserver((mutations) => {
+            let shouldCheck = false;
+
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    for (const node of mutation.addedNodes) {
                         if (node.nodeType === Node.ELEMENT_NODE) {
-                            // Check if the added node or its children are ads - be more specific
-                            if (isAdElement(node) || node.querySelector && node.querySelector('.ad-container, .adsbygoogle, .sponsored-content, iframe[src*="doubleclick"]')) {
-                                shouldRemoveAds = true;
+                            // Only check for very specific ad indicators
+                            if (node.classList && (
+                                node.classList.contains('adsbygoogle') ||
+                                node.classList.contains('taboola-container') ||
+                                node.classList.contains('outbrain-container')
+                            )) {
+                                shouldCheck = true;
+                                break;
+                            }
+                            // Check for ad iframes
+                            if (node.tagName === 'IFRAME') {
+                                const src = node.getAttribute('src') || '';
+                                if (src.includes('doubleclick.net') || 
+                                    src.includes('googlesyndication.com') ||
+                                    src.includes('amazon-adsystem.com')) {
+                                    shouldCheck = true;
+                                    break;
+                                }
                             }
                         }
-                    });
+                    }
                 }
-            });
+                if (shouldCheck) break;
+            }
 
-            if (shouldRemoveAds) {
-                setTimeout(() => {
-                    removeAdElements();
-                    injectAdHidingCSS();
-                }, 100);
+            if (shouldCheck) {
+                // Debounce the removal
+                clearTimeout(window.__zenAdBlockerTimeout);
+                window.__zenAdBlockerTimeout = setTimeout(removeAdElements, 200);
             }
         });
 
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['class', 'id', 'src']
-        });
-
-        return observer;
-    }
-
-    // Check if element is ad-related
-    function isAdElement(element) {
-        if (!element || !element.classList) return false;
-        
-        // Be more specific - only match exact ad classes
-        const adClasses = ['ad-container', 'ad-wrapper', 'ad-slot', 'adsbygoogle', 'sponsored-content'];
-        const className = element.className.toString().toLowerCase();
-        
-        return adClasses.some(adClass => className.includes(adClass));
+        if (document.body) {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
     }
 
     // Main initialization function
     function init() {
-        console.log('General Ad Blocker: Initializing...');
-        
         // Inject CSS immediately
         injectAdHidingCSS();
         
-        // Remove existing ads
-        setTimeout(removeAdElements, 100);
-        
-        // Block ad scripts
-        setTimeout(blockAdScripts, 200);
+        // Remove existing ads after a short delay
+        setTimeout(removeAdElements, 500);
         
         // Setup mutation observer
-        setTimeout(setupMutationObserver, 300);
-        
-        // Periodic ad removal
-        setInterval(removeAdElements, 5000);
-        
-        console.log('General Ad Blocker: Initialized successfully');
+        if (document.body) {
+            setupMutationObserver();
+        } else {
+            document.addEventListener('DOMContentLoaded', setupMutationObserver);
+        }
     }
 
-    // Wait for DOM to be ready
+    // Initialize based on document state
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
-
-    // Also initialize when the page is fully loaded
-    window.addEventListener('load', () => {
-        setTimeout(init, 1000);
-    });
 
 })();

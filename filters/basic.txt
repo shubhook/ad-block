@@ -1,4 +1,54 @@
-doubleclick.net
-googlesyndication.com
-adsystem.com
-adservice.google.com
+! Zen Ad Blocker - Built-in Filter List
+! Homepage: https://github.com/anomalyco/opencode
+! Last modified: 2026-02-11
+! License: MIT
+
+! Google Ads
+||doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||adservice.google.com^
+||pagead2.googlesyndication.com^
+||googletagmanager.com^
+||googletagservices.com^
+||google-analytics.com^
+
+! Facebook/Meta
+||pixel.facebook.com^
+||ads.facebook.com^
+||connect.facebook.net^
+
+! Amazon
+||amazon-adsystem.com^
+||assoc-amazon.com^
+
+! Twitter/X
+||ads-twitter.com^
+||ads-api.twitter.com^
+||analytics.twitter.com^
+
+! Yahoo
+||adserver.yahoo.com^
+||advertising.yahoo.com^
+
+! Ad Networks
+||adnxs.com^
+||advertising.com^
+||appnexus.com^
+||criteo.com^
+||criteo.net^
+||taboola.com^
+||outbrain.com^
+||sharethrough.com^
+||rubiconproject.com^
+||pubmatic.com^
+||openx.net^
+||casalemedia.com^
+||contextweb.com^
+||media.net^
+
+! Tracking
+||moatads.com^
+||scorecardresearch.com^
+||quantserve.com^
+||hotjar.com^
